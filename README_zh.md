@@ -1,6 +1,6 @@
 # goccctrl
 
-[English](https://github.com/vscz/goccctrl/README.md) | [中文文档](https://github.com/vscz/goccctrl/README_zh.md)
+[English](README.md) | [中文文档](README_zh.md)
 
 ---
 
@@ -23,4 +23,4 @@ go get https://github.com/vscz/goccctrl@v0.1.0
 
 ### 示例
 
-见 [example/main.go](https://github.com/vscz/goccctrl/example/main.go)
+见 [example/main.go](example/main.go)
