@@ -8,68 +8,44 @@ import (
 )
 
 // Weighted target must implement this interface
-type Weighted interface {
-	Weight() int
-}
-
-// Validatable result must implement this interface
-type Validatable interface {
-	IsValid() bool
+type TargetReq interface {
+	Weighted
 }
 
 // NoWeighted is a struct that implements the Weighted interface
-type NoWeighted struct {
+type DefaultTargetReq struct {
 }
 
-func (n NoWeighted) Weight() int {
+func (n DefaultTargetReq) Weight() int {
 	return 1
 }
 
-type Result[R Validatable] struct {
-	Val       R
-	Err       error
-	MoreValCh <-chan Result[R]
-}
-
 // ReqFunc is the generic request function type
-type ReqFunc[T Weighted, R Validatable] func(ctx context.Context, target T) Result[R]
+type TargetReqFunc[T TargetReq, R Validatable] func(ctx context.Context, target T) Result[R]
 
-type ReqTime struct {
-	TotalTimeout time.Duration
-	FirstWait    time.Duration
-	MinWait      time.Duration
-}
-
-func (r *ReqTime) NextWaitTime(wait time.Duration) time.Duration {
-	if wait > r.MinWait {
-		return wait / 2
-	}
-	return r.MinWait
-}
-
-func NewReqParam[T Weighted, R Validatable](targets []T, reqTime ReqTime, reqFunc ReqFunc[T, R]) *ReqParam[T, R] {
-	return &ReqParam[T, R]{
+func NewReqParamWaitOther[T TargetReq, R Validatable](targets []T, reqTime ReqTime, reqFunc TargetReqFunc[T, R]) *ReqParamWaitOther[T, R] {
+	return &ReqParamWaitOther[T, R]{
 		ReqTime: reqTime,
 		Targets: targets,
 		ReqFunc: reqFunc,
 	}
 }
 
-type ReqParam[T Weighted, R Validatable] struct {
+type ReqParamWaitOther[T TargetReq, R Validatable] struct {
 	ReqTime ReqTime
 
 	Targets        []T
-	ReqFunc        ReqFunc[T, R]
+	ReqFunc        TargetReqFunc[T, R]
 	ShuffleTargets bool
 }
 
 // SetShuffleTargets sets whether to shuffle targets
-func (r *ReqParam[T, R]) SetShuffleTargets(shuffle bool) {
+func (r *ReqParamWaitOther[T, R]) SetShuffleTargets(shuffle bool) {
 	r.ShuffleTargets = shuffle
 }
 
 // DoShuffleTargets shuffles targets
-func (r *ReqParam[T, R]) DoShuffleTargets() {
+func (r *ReqParamWaitOther[T, R]) DoShuffleTargets() {
 	if !r.ShuffleTargets {
 		return
 	}
@@ -79,7 +55,7 @@ func (r *ReqParam[T, R]) DoShuffleTargets() {
 
 	for len(used) < len(r.Targets) {
 		// weighted pick
-		idx := weightedPick(r.Targets, used)
+		idx := targetReqPick(r.Targets, used)
 		if idx == -1 {
 			break
 		}
@@ -97,7 +73,7 @@ func (r *ReqParam[T, R]) DoShuffleTargets() {
 }
 
 // Do executes requests progressively with weighted scheduling
-func (r *ReqParam[T, R]) Do(ctx context.Context) Result[R] {
+func (r *ReqParamWaitOther[T, R]) Do(ctx context.Context) Result[R] {
 	var zero R
 	if len(r.Targets) == 0 {
 		return Result[R]{Val: zero, Err: errors.New("no targets provided")}
@@ -147,7 +123,7 @@ func (r *ReqParam[T, R]) Do(ctx context.Context) Result[R] {
 	}
 }
 
-func (r *ReqParam[T, R]) doRequest(ctx context.Context, target T, resultCh chan Result[R]) {
+func (r *ReqParamWaitOther[T, R]) doRequest(ctx context.Context, target T, resultCh chan Result[R]) {
 	ret := r.ReqFunc(ctx, target)
 	if ret.Err != nil || !ret.Val.IsValid() {
 		return
@@ -169,8 +145,8 @@ func (r *ReqParam[T, R]) doRequest(ctx context.Context, target T, resultCh chan 
 	}()
 }
 
-// weightedPick randomly selects an unused target based on weights
-func weightedPick[T Weighted](targets []T, used map[int]bool) int {
+// targetReqPick randomly selects an unused target based on weights
+func targetReqPick[T TargetReq](targets []T, used map[int]bool) int {
 	total := 0
 	for i, t := range targets {
 		if used[i] {
