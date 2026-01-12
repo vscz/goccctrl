@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"math/rand"
+	"sync"
 	"time"
 )
 
@@ -97,7 +98,7 @@ func (r *ReqParam[T, R]) DoShuffleTargets() {
 }
 
 // Do executes requests progressively with weighted scheduling
-func (r *ReqParam[T, R]) Do(ctx context.Context) Result[R] {
+func (r *ReqParam[T, R]) Do(ctx context.Context) (res Result[R]) {
 	var zero R
 	if len(r.Targets) == 0 {
 		return Result[R]{Val: zero, Err: errors.New("no targets provided")}
@@ -108,17 +109,27 @@ func (r *ReqParam[T, R]) Do(ctx context.Context) Result[R] {
 
 	resultCh := make(chan Result[R], len(r.Targets)-1)
 
-	wait := r.ReqTime.FirstWait
+	wg := sync.WaitGroup{}
+	// check if close resultCh when all requests are done
+	defer func() {
+		res.MoreValCh = resultCh
 
+		go func() {
+			wg.Wait()
+			close(resultCh)
+		}()
+	}()
+
+	wait := r.ReqTime.FirstWait
 	r.DoShuffleTargets()
 	for idx := range r.Targets {
-		go r.doRequest(ctx, r.Targets[idx], resultCh)
+		wg.Add(1)
+		go r.doRequest(ctx, r.Targets[idx], resultCh, &wg)
 
 		// check next by last result or wait time
 		select {
-		case res := <-resultCh:
+		case res = <-resultCh:
 			// cancel()
-			res.MoreValCh = resultCh
 			return res
 		case <-time.After(wait):
 			// halve wait time, but not below minWait
@@ -130,24 +141,25 @@ func (r *ReqParam[T, R]) Do(ctx context.Context) Result[R] {
 			}
 			continue
 		case <-ctx.Done():
-			return Result[R]{Val: zero, Err: errors.New("overall timeout reached"), MoreValCh: resultCh}
+			return Result[R]{Val: zero, Err: errors.New("overall timeout reached")}
 		}
 	}
 
 	// wait for final results
 	select {
-	case res := <-resultCh:
+	case res = <-resultCh:
 		// cancel()
-		res.MoreValCh = resultCh
 		return res
 	case <-ctx.Done():
-		return Result[R]{Val: zero, Err: errors.New("overall timeout reached"), MoreValCh: resultCh}
+		return Result[R]{Val: zero, Err: errors.New("overall timeout reached")}
 	case <-time.After(wait):
-		return Result[R]{Val: zero, Err: errors.New("all requests failed or timed out"), MoreValCh: resultCh}
+		return Result[R]{Val: zero, Err: errors.New("all requests failed or timed out")}
 	}
 }
 
-func (r *ReqParam[T, R]) doRequest(ctx context.Context, target T, resultCh chan Result[R]) {
+func (r *ReqParam[T, R]) doRequest(ctx context.Context, target T, resultCh chan Result[R], wg *sync.WaitGroup) {
+	defer wg.Done()
+
 	ret := r.ReqFunc(ctx, target)
 	if ret.Err != nil || !ret.Val.IsValid() {
 		return
