@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"math/rand"
+	"sync"
 	"time"
 )
 
@@ -26,8 +27,9 @@ func (n NoWeighted) Weight() int {
 }
 
 type Result[R Validatable] struct {
-	Val R
-	Err error
+	Val       R
+	Err       error
+	MoreValCh <-chan Result[R]
 }
 
 // ReqFunc is the generic request function type
@@ -96,27 +98,38 @@ func (r *ReqParam[T, R]) DoShuffleTargets() {
 }
 
 // Do executes requests progressively with weighted scheduling
-func (r *ReqParam[T, R]) Do(ctx context.Context) Result[R] {
+func (r *ReqParam[T, R]) Do(ctx context.Context) (res Result[R]) {
 	var zero R
 	if len(r.Targets) == 0 {
 		return Result[R]{Val: zero, Err: errors.New("no targets provided")}
 	}
 
-	ctx, cancel := context.WithTimeout(ctx, r.ReqTime.TotalTimeout)
-	defer cancel()
+	ctx, _ = context.WithTimeout(ctx, r.ReqTime.TotalTimeout)
+	// defer cancel()
 
-	resultCh := make(chan Result[R], 1)
+	resultCh := make(chan Result[R], len(r.Targets)-1)
+
+	wg := sync.WaitGroup{}
+	// check if close resultCh when all requests are done
+	defer func() {
+		res.MoreValCh = resultCh
+
+		go func() {
+			wg.Wait()
+			close(resultCh)
+		}()
+	}()
 
 	wait := r.ReqTime.FirstWait
-
 	r.DoShuffleTargets()
 	for idx := range r.Targets {
-		go r.doRequest(ctx, r.Targets[idx], resultCh)
+		wg.Add(1)
+		go r.doRequest(ctx, r.Targets[idx], resultCh, &wg)
 
 		// check next by last result or wait time
 		select {
-		case res := <-resultCh:
-			cancel()
+		case res = <-resultCh:
+			// cancel()
 			return res
 		case <-time.After(wait):
 			// halve wait time, but not below minWait
@@ -134,8 +147,8 @@ func (r *ReqParam[T, R]) Do(ctx context.Context) Result[R] {
 
 	// wait for final results
 	select {
-	case res := <-resultCh:
-		cancel()
+	case res = <-resultCh:
+		// cancel()
 		return res
 	case <-ctx.Done():
 		return Result[R]{Val: zero, Err: errors.New("overall timeout reached")}
@@ -144,16 +157,28 @@ func (r *ReqParam[T, R]) Do(ctx context.Context) Result[R] {
 	}
 }
 
-func (r *ReqParam[T, R]) doRequest(ctx context.Context, target T, resultCh chan Result[R]) {
+func (r *ReqParam[T, R]) doRequest(ctx context.Context, target T, resultCh chan Result[R], wg *sync.WaitGroup) {
+	defer wg.Done()
+
 	ret := r.ReqFunc(ctx, target)
 	if ret.Err != nil || !ret.Val.IsValid() {
 		return
 	}
 
-	select {
-	case resultCh <- ret:
-	case <-ctx.Done():
-	}
+	// Attempt to send result. Use recover to handle case where channel might be closed.
+	// Note: In Go, you cannot directly check if a channel is closed before sending.
+	// Sending to a closed channel will panic, so we use recover as a safety measure.
+	func() {
+		defer func() {
+			if recover() != nil {
+				// Channel was closed, ignore the panic
+			}
+		}()
+		select {
+		case resultCh <- ret:
+		case <-ctx.Done():
+		}
+	}()
 }
 
 // weightedPick randomly selects an unused target based on weights

@@ -31,27 +31,88 @@ func mockRequest(ctx context.Context, t mockTarget) Result[mockResult] {
 	}
 }
 
-func TestProgressiveRequest_Success(t *testing.T) {
+func TestProgressiveRequest_1SuccessWithinMaxTime(t *testing.T) {
 	targets := []mockTarget{
-		{"fast", 5, 200 * time.Millisecond, true},
-		{"slow", 1, 2 * time.Second, true},
+		{id: "fast", weight: 5, delay: 200 * time.Millisecond, ok: true},
+		{id: "slow", weight: 1, delay: 2 * time.Second, ok: true},
 	}
 
-	reqTime := ReqTime{1 * time.Second, 5 * time.Second, 200 * time.Millisecond}
+	reqTime := ReqTime{TotalTimeout: 3 * time.Second, FirstWait: 1 * time.Second, MinWait: 200 * time.Millisecond}
 	param := NewReqParam(targets, reqTime, mockRequest)
 
 	res := param.Do(context.Background())
 	if res.Err != nil {
-		t.Fatalf("expected success, got error: %v", res.Err)
+		t.Errorf("expected success, got error: %v", res.Err)
 	}
 	if res.Val.val != "fast" {
-		t.Fatalf("expected fast, got %v", res.Val.val)
+		t.Errorf("expected fast, got %v", res.Val.val)
+	}
+
+	t.Logf("res: %+v", res)
+
+	// read more from moreValCh
+	for more := range res.MoreValCh {
+		t.Logf("more: %+v", more)
 	}
 }
 
-func TestProgressiveRequest_Timeout(t *testing.T) {
+func TestProgressiveRequest_MultiSuccessWithinMaxTime(t *testing.T) {
 	targets := []mockTarget{
-		{"timeout", 1, 3 * time.Second, true},
+		{id: "fast1", weight: 5, delay: 1700 * time.Millisecond, ok: true},
+		{id: "fast2", weight: 5, delay: 1200 * time.Millisecond, ok: true},
+		{id: "fast3", weight: 5, delay: 1200 * time.Millisecond, ok: true},
+		{id: "slow", weight: 1, delay: 3 * time.Second, ok: true},
+	}
+
+	reqTime := ReqTime{TotalTimeout: 5 * time.Second, FirstWait: 1 * time.Second, MinWait: 200 * time.Millisecond}
+	param := NewReqParam(targets, reqTime, mockRequest)
+
+	res := param.Do(context.Background())
+	if res.Err != nil {
+		t.Errorf("expected success, got error: %v", res.Err)
+	}
+	if res.Val.val != "fast1" {
+		t.Errorf("expected fast1, got %v", res.Val.val)
+	}
+
+	t.Logf("res: %+v", res)
+
+	// read more from moreValCh
+	for more := range res.MoreValCh {
+		t.Logf("more: %+v", more)
+	}
+}
+
+func TestProgressiveRequest_SomeTimeout(t *testing.T) {
+	targets := []mockTarget{
+		{id: "timeout", weight: 1, delay: 3 * time.Second, ok: true},
+		{id: "timeout2", weight: 1, delay: 4 * time.Second, ok: true},
+		{id: "success", weight: 1, delay: 1 * time.Second, ok: true},
+		{id: "success2", weight: 1, delay: 2 * time.Second, ok: true},
+	}
+
+	reqTime := ReqTime{2500 * time.Millisecond, 1 * time.Second, 200 * time.Millisecond}
+	param := NewReqParam(targets, reqTime, mockRequest)
+
+	res := param.Do(context.Background())
+	if res.Err == nil {
+		t.Errorf("expected timeout error, got %v", res.Err)
+	}
+	if res.Val.val != "timeout" {
+		t.Errorf("expected timeout, got %v", res.Val.val)
+	}
+
+	t.Logf("res: %+v", res)
+	// read more from moreValCh
+	for more := range res.MoreValCh {
+		t.Logf("more: %+v", more)
+	}
+}
+
+func TestProgressiveRequest_AllTimeout(t *testing.T) {
+	targets := []mockTarget{
+		{id: "timeout", weight: 1, delay: 3 * time.Second, ok: true},
+		{id: "timeout2", weight: 1, delay: 4 * time.Second, ok: true},
 	}
 
 	reqTime := ReqTime{500 * time.Millisecond, 1 * time.Second, 200 * time.Millisecond}
@@ -59,6 +120,19 @@ func TestProgressiveRequest_Timeout(t *testing.T) {
 
 	res := param.Do(context.Background())
 	if res.Err == nil {
-		t.Fatalf("expected timeout error, got %v", res.Err)
+		t.Errorf("expected timeout error, got %v", res.Err)
+	}
+	if res.Val.val != "timeout" {
+		t.Errorf("expected timeout, got %v", res.Val.val)
+	}
+
+	t.Logf("res: %+v", res)
+	// read more from moreValCh
+	for more := range res.MoreValCh {
+		if more.Val.val != "timeout2" {
+			t.Errorf("more: expected timeout2, got %v", more.Val.val)
+		}
+
+		t.Logf("more: %+v", more)
 	}
 }
