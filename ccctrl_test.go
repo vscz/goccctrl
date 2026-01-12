@@ -54,8 +54,6 @@ func TestProgressiveRequest_1SuccessWithinMaxTime(t *testing.T) {
 	for more := range res.MoreValCh {
 		t.Logf("more: %+v", more)
 	}
-
-	t.Error("test")
 }
 
 func TestProgressiveRequest_MultiSuccessWithinMaxTime(t *testing.T) {
@@ -83,8 +81,6 @@ func TestProgressiveRequest_MultiSuccessWithinMaxTime(t *testing.T) {
 	for more := range res.MoreValCh {
 		t.Logf("more: %+v", more)
 	}
-
-	t.Error("test")
 }
 
 func TestProgressiveRequest_SomeTimeout(t *testing.T) {
@@ -111,8 +107,6 @@ func TestProgressiveRequest_SomeTimeout(t *testing.T) {
 	for more := range res.MoreValCh {
 		t.Logf("more: %+v", more)
 	}
-
-	t.Error("test")
 }
 
 func TestProgressiveRequest_AllTimeout(t *testing.T) {
@@ -141,6 +135,4 @@ func TestProgressiveRequest_AllTimeout(t *testing.T) {
 
 		t.Logf("more: %+v", more)
 	}
-
-	t.Error("test")
 }
